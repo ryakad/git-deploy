@@ -1,9 +1,139 @@
 #!/usr/bin/env python
 #
-# Riaka Auto Deploy
-#
+# Git Deploy
 # Copyright (c) Ryan Kadwell <ryan@riaka.ca>
 #
-# Simple Script to be run in the git post-receive hook to update the remotes
-# on projects.
+# Simple Script to be perform deploys based on tags in the commit messages.
+#
 
+import subprocess
+import fileinput
+import re
+import sys
+import os
+
+# Targets dict lists allowed deploy targets in a key=target value=path dictionary
+#
+# targets = {
+#   "live": "/var/www/path-to-live-repo",
+#   "beta": "/var/www/path-to-beta-repo"
+# }
+#
+targets = {}
+
+def git(args):
+    """
+    Function for running git command through subprocess
+    """
+    cmd = subprocess.Popen(['git'] + args, stdout = subprocess.PIPE)
+    output = cmd.stdout.read()
+    output = output.strip()
+    return output
+
+def get_timestamp(commit_hash):
+    """
+    Get the commit timestamp for a given commit
+    """
+    result = git(["show", "--stat", "--format=%ct", commit_hash])
+    result_lines = result.split("\n")
+    # make sure that we got a valid response
+    if re.match(r'^[0-9]+$', result_lines[0]):
+        return result_lines[0]
+    else:
+        return 0
+
+if not targets:
+    print('deploy: No targets are defined. Go to http://github.com/ryakad/git-deploy'
+        ' for information on how to set up this script')
+    sys.exit(0)
+
+print('deploy: reading pushed commit messages')
+
+deploy_targets = {} # commit objects that need to be checked for deploy.
+pattern = re.compile(r'#HASH#')
+
+for line in fileinput.input():
+    parts = line.split(" ") # <old_value> SP <ne_value> SP <ref_name>
+
+    # if this commit is the first on a branch we take the log for it
+    if parts[0] == "0000000000000000000000000000000000000000":
+        # TODO: Can't deploy with the first push of a branch.
+        # Need to be able to get a log for this branch only or give more
+        # detailed information to the user.
+        continue
+    else:
+        commitlog = git(["log", "--pretty=#HASH#%H%n%B", parts[0] + '..' + parts[1]])
+
+    for line in commitlog.split("\n"):
+        # check if the line starts with #HASH# and if so add an entry to the
+        # commits array. If not we will want to append the string to the
+        # previous commit message
+        if pattern.match(line):
+            current_hash = re.sub(pattern, '', line)
+            deploy_targets[current_hash] = []
+            continue
+
+        deploy_targets[current_hash].append(line)
+
+# We now have our targets and can look for which ones need to be deployed.
+deploys = {}
+invalid_targets = []
+
+deploy_pattern = re.compile(r'\[deploy-([a-z]+)\]')
+for commit in deploy_targets:
+    commit_message = "\n".join(deploy_targets[commit])
+    for target in re.findall(deploy_pattern, commit_message):
+        # Check that they have provided a valid target
+        if target in targets.keys():
+            if not target in deploys.keys():
+                deploys[target] = []
+
+            deploys[target].append(commit)
+        else:
+            invalid_targets.append(target)
+
+# Notify users of what deploy targets we will be skipping before we start
+if invalid_targets:
+    for target in invalid_targets:
+        print('deploy: skipping unknown target: "' + target + '"')
+
+if not deploys:
+    print('deploy: nothing to deploy')
+    sys.exit(1)
+
+root_repo = os.getcwd()
+# Need to find the commit with the newest commit-date and then update to that
+for target in deploys:
+    os.chdir(root_repo)
+    os.unsetenv('GIT_DIR')
+
+    newest = None
+    for commit_hash in deploys[target]:
+        if newest == None:
+            newest = commit_hash
+            continue
+
+        print("deploy: comparing commits " + newest + " with " + commit_hash)
+
+        previous_timestamp = get_timestamp(newest)
+        current_timestamp = get_timestamp(commit_hash)
+        if previous_timestamp > current_timestamp:
+            newest = newest
+        else:
+            newest = commit_hash
+
+    # deploy if it is newer than the last deploy
+    wants_deploy = get_timestamp(newest)
+    os.chdir(targets[target])
+    os.unsetenv('GIT_DIR')
+
+    currently_on = get_timestamp(git(["rev-parse", "HEAD"]))
+    if wants_deploy > currently_on:
+        print('deploy: Deploying ' + newest + ' to ' + target)
+        print(' +++ GIT DEBUG OUTPUT +++')
+        print(git(["reset", "--hard", "HEAD"]))
+        print(git(["pull", "--all"]))
+        print(git(["checkout", newest]))
+        print(' --- GIT DEBUG OUTPUT ---')
+    else:
+        print("deploy: latest in repo is a newer version than " + newest + ". skipping.")
