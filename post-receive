@@ -3,7 +3,11 @@
 # Git Deploy
 # Copyright (c) Ryan Kadwell <ryan@riaka.ca>
 #
-# Simple Script to be perform deploys based on tags in the commit messages.
+# For the full copyright and license information, please view the LICENSE
+# file that was distributed with this source code.
+#
+# Simple post-receive hook to perform deploys based on tags in the commit
+# messages for git repositories.
 #
 
 import subprocess
