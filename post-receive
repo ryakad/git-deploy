@@ -130,10 +130,8 @@ for target in deploys:
     currently_on = get_timestamp(git(["rev-parse", "HEAD"]))
     if wants_deploy > currently_on:
         print('deploy: Deploying ' + newest + ' to ' + target)
-        print(' +++ GIT DEBUG OUTPUT +++')
         print(git(["reset", "--hard", "HEAD"]))
         print(git(["pull", "--all"]))
         print(git(["checkout", newest]))
-        print(' --- GIT DEBUG OUTPUT ---')
     else:
         print("deploy: latest in repo is a newer version than " + newest + ". skipping.")
